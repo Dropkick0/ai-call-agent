@@ -110,6 +110,7 @@ curl -X POST "http://localhost:5050/make-call" -H "Content-Type: application/jso
 - `PORT`: Server port (default: 5050)
 - `GOOGLE_CRED_JSON`: Path or JSON with Google credentials
 - `CALENDAR_ID`: Google Calendar ID used for scheduling
+- `DISALLOWED_TOPICS_REGEX`: Regex pattern for topics the agent should avoid
 
 ### System Prompt
 
