@@ -6,6 +6,11 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
+from guardrails.validator_base import register_validator, Validator
+from guardrails.classes.validation.validation_result import PassResult, FailResult
+from guardrails.guard import Guard
+from pydantic import BaseModel, Field
+
 import structlog
 import websockets
 from fastapi import FastAPI, WebSocket, Request
@@ -26,6 +31,32 @@ structlog.configure(
     ]
 )
 logger = structlog.get_logger()
+
+
+@register_validator("intent_whitelist", data_type="string")
+class IntentWhitelist(Validator):
+    """Validate that intent is one of the allowed choices."""
+
+    def __init__(self, intents, **kwargs):
+        super().__init__(**kwargs)
+        self.intents = set(intents)
+
+    def _validate(self, value, metadata):
+        if isinstance(value, str) and value in self.intents:
+            return PassResult()
+        return FailResult(error_message=f"Intent '{value}' not allowed")
+
+
+class LLMOutput(BaseModel):
+    intent: str = Field(
+        json_schema_extra={
+            "validators": [IntentWhitelist(["greeting", "ask_date"])]
+        }
+    )
+    text: str
+
+
+intent_guard = Guard.for_pydantic(LLMOutput)
 
 
 def load_prompt(file_name):
@@ -221,6 +252,23 @@ async def handle_media_stream(websocket: WebSocket):
                         logger.info(
                             "conversation.item", call_id=call_id, item=response
                         )
+                        content = None
+                        if isinstance(response.get("message"), dict):
+                            content = response["message"].get("content")
+                        elif "content" in response:
+                            content = response.get("content")
+                        if content:
+                            try:
+                                intent_guard.parse(
+                                    content if isinstance(content, str) else json.dumps(content)
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "intent.validation_failed",
+                                    call_id=call_id,
+                                    error=str(exc),
+                                    content=content,
+                                )
                     if response["type"] == "input_audio_buffer.speech_started":
                         logger.info("speech.start", call_id=call_id)
 
