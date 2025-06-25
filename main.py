@@ -21,6 +21,7 @@ from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Connect
 from dotenv import load_dotenv
 import gcal
+from db import init_db, save_call_summary
 
 load_dotenv()
 
@@ -125,6 +126,7 @@ LOG_EVENT_TYPES = [
 ]
 
 app = FastAPI()
+init_db()
 
 if not OPENAI_API_KEY:
     raise ValueError("Missing the OpenAI API key. Please set it in the .env file.")
@@ -463,6 +465,35 @@ async def handle_media_stream(websocket: WebSocket):
                 start_time=start_ts,
                 stop_time=stop_ts,
                 outcome=transcripts,
+            )
+
+            # Persist transcript to file and record summary in the database
+            transcript_dir = os.path.join(os.path.dirname(__file__), "transcripts")
+            os.makedirs(transcript_dir, exist_ok=True)
+            transcript_file = os.path.join(
+                transcript_dir, f"{call_id}_{session_id or 'session'}.json"
+            )
+            try:
+                with open(transcript_file, "w", encoding="utf-8") as f:
+                    json.dump(transcripts, f, ensure_ascii=False, indent=2)
+            except Exception as exc:
+                logger.error("transcript.save_failed", call_id=call_id, error=str(exc))
+                transcript_file = None
+
+            try:
+                duration = (
+                    datetime.fromisoformat(stop_ts)
+                    - datetime.fromisoformat(start_ts)
+                ).total_seconds()
+            except Exception:
+                duration = 0.0
+
+            save_call_summary(
+                call_id=call_id,
+                duration=duration,
+                outcome="completed",
+                scheduled_time=datetime.fromisoformat(start_ts),
+                transcript_path=transcript_file,
             )
 
 
