@@ -18,7 +18,7 @@ idna==3.10
 jiter==0.8.0
 multidict==6.1.0
 observable==0.3.2
-openai==1.57.1
+openai[agents]>=1.23
 propcache==0.2.1
 pydantic==2.10.3
 pydantic_core==2.27.1
