@@ -167,6 +167,38 @@ async def offer_time_slots(prospect_name: str):
     return {"prospect_name": prospect_name, "time_slots": slots}
 
 
+@app.post("/schedule-meeting")
+async def schedule_meeting(prospect_name: str, time_slot: str, email: str):
+    """Create a calendar event using the chosen time slot."""
+    if not CALENDAR_ID:
+        raise ValueError("CALENDAR_ID environment variable not set")
+
+    try:
+        start_str, end_str = [s.strip() for s in time_slot.split("-")]
+        today = datetime.now(timezone.utc)
+        start_dt = datetime.strptime(start_str, "%I:%M %p")
+        end_dt = datetime.strptime(end_str, "%I:%M %p")
+        start = today.replace(hour=start_dt.hour, minute=start_dt.minute, second=0, microsecond=0)
+        end = today.replace(hour=end_dt.hour, minute=end_dt.minute, second=0, microsecond=0)
+    except Exception as exc:
+        logger.error("schedule.parse_failed", time_slot=time_slot, error=str(exc))
+        return {"error": "Invalid time slot"}
+
+    try:
+        event = gcal.create_event(
+            CALENDAR_ID,
+            start,
+            end,
+            f"Call with {prospect_name}"
+        )
+        logger.info("schedule.created", event_id=event.get("id"))
+    except Exception as exc:
+        logger.error("schedule.failed", error=str(exc))
+        return {"error": "Failed to schedule meeting"}
+
+    return {"status": "scheduled", "event_id": event.get("id"), "email": email}
+
+
 @app.api_route("/outgoing-call", methods=["GET", "POST"])
 async def handle_outgoing_call(request: Request):
     """Handle outgoing call and return TwiML response to connect to Media Stream."""
