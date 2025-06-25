@@ -22,6 +22,7 @@ from twilio.twiml.voice_response import VoiceResponse, Connect
 from dotenv import load_dotenv
 import gcal
 from db import init_db, save_call_summary
+from metrics import compute_call_metrics, write_report
 
 load_dotenv()
 
@@ -36,6 +37,8 @@ logger = structlog.get_logger()
 
 # Global variable to track the active call SID
 CURRENT_CALL_ID = None
+# Track metrics for the current call
+CURRENT_METRICS = None
 
 
 @register_validator("intent_whitelist", data_type="string")
@@ -108,10 +111,13 @@ def get_todays_free_slots():
         raise ValueError("CALENDAR_ID environment variable not set")
     start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
+    global CURRENT_METRICS
     try:
         slots = gcal.list_free_slots(CALENDAR_ID, start, end)
     except Exception as exc:
         logger.error("slots.fetch_failed", error=str(exc))
+        if CURRENT_METRICS is not None:
+            CURRENT_METRICS["calendar_errors"] += 1
         return []
     return [f"{s[0].strftime('%I:%M %p')} - {s[1].strftime('%I:%M %p')}" for s in slots]
 VOICE = "echo"
@@ -178,6 +184,7 @@ async def schedule_meeting(prospect_name: str, time_slot: str, email: str):
     if not CALENDAR_ID:
         raise ValueError("CALENDAR_ID environment variable not set")
 
+    global CURRENT_METRICS
     try:
         start_str, end_str = [s.strip() for s in time_slot.split("-")]
         today = datetime.now(timezone.utc)
@@ -187,6 +194,8 @@ async def schedule_meeting(prospect_name: str, time_slot: str, email: str):
         end = today.replace(hour=end_dt.hour, minute=end_dt.minute, second=0, microsecond=0)
     except Exception as exc:
         logger.error("schedule.parse_failed", time_slot=time_slot, error=str(exc))
+        if CURRENT_METRICS is not None:
+            CURRENT_METRICS["calendar_errors"] += 1
         return {"error": "Invalid time slot"}
 
     try:
@@ -199,6 +208,8 @@ async def schedule_meeting(prospect_name: str, time_slot: str, email: str):
         logger.info("schedule.created", event_id=event.get("id"))
     except Exception as exc:
         logger.error("schedule.failed", error=str(exc))
+        if CURRENT_METRICS is not None:
+            CURRENT_METRICS["calendar_errors"] += 1
         return {"error": "Failed to schedule meeting"}
 
     return {"status": "scheduled", "event_id": event.get("id"), "email": email}
@@ -260,6 +271,15 @@ async def handle_media_stream(websocket: WebSocket):
         transcripts = []
         silence_count = 0
         derailment_count = 0
+        guardrail_rejects = 0
+        latencies = []
+        speech_start_time = None
+        global CURRENT_METRICS
+        CURRENT_METRICS = {
+            "guardrail_rejects": 0,
+            "calendar_errors": 0,
+            "latencies": [],
+        }
 
         async def receive_from_twilio():
             """Receive audio data from Twilio and send it to the OpenAI Realtime API."""
@@ -357,10 +377,19 @@ async def handle_media_stream(websocket: WebSocket):
                             "conversation.item", call_id=call_id, item=response
                         )
                         content = None
+                        role = None
                         if isinstance(response.get("message"), dict):
+                            role = response["message"].get("role")
                             content = response["message"].get("content")
                         elif "content" in response:
                             content = response.get("content")
+                            role = response.get("role") or response.get("speaker")
+                        if role == "assistant" and speech_start_time is not None:
+                            latency = time.monotonic() - speech_start_time
+                            latencies.append(latency)
+                            if CURRENT_METRICS is not None:
+                                CURRENT_METRICS["latencies"].append(latency)
+                            speech_start_time = None
                         if content:
                             if contains_disallowed_topic(content):
                                 logger.warning(
@@ -369,6 +398,9 @@ async def handle_media_stream(websocket: WebSocket):
                                     content=content,
                                 )
                                 derailment_count += 1
+                                guardrail_rejects += 1
+                                if CURRENT_METRICS is not None:
+                                    CURRENT_METRICS["guardrail_rejects"] += 1
                                 if openai_ws.open:
                                     await openai_ws.send(
                                         json.dumps({"type": "response.cancel"})
@@ -396,6 +428,9 @@ async def handle_media_stream(websocket: WebSocket):
                                     error=str(exc),
                                     content=content,
                                 )
+                                guardrail_rejects += 1
+                                if CURRENT_METRICS is not None:
+                                    CURRENT_METRICS["guardrail_rejects"] += 1
                             if intent:
                                 if session["state"] == "awaiting_greeting":
                                     if intent == "greeting":
@@ -441,6 +476,7 @@ async def handle_media_stream(websocket: WebSocket):
                                             break
                     if response["type"] == "input_audio_buffer.speech_started":
                         logger.info("speech.start", call_id=call_id)
+                        speech_start_time = time.monotonic()
 
                         # Send clear event to Twilio
                         await websocket.send_json({"streamSid": stream_sid, "event": "clear"})
@@ -514,6 +550,20 @@ async def handle_media_stream(websocket: WebSocket):
                 scheduled_time=datetime.fromisoformat(start_ts),
                 transcript_path=transcript_file,
             )
+
+            metrics = compute_call_metrics(
+                transcripts=transcripts,
+                start_time=start_ts,
+                stop_time=stop_ts,
+                guardrail_rejects=guardrail_rejects,
+                calendar_errors=CURRENT_METRICS.get("calendar_errors", 0)
+                if CURRENT_METRICS
+                else 0,
+                latencies=latencies,
+            )
+            write_report(call_id, metrics)
+
+            CURRENT_METRICS = None
 
 
 async def send_session_update(openai_ws, session):
