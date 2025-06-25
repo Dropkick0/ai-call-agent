@@ -43,7 +43,7 @@ cd ai-call-agent
 pip install -r requirements.txt
 ```
 
-3. Create a `.env` file in the root directory with your credentials:
+3. Copy `.env.example` to `.env` and add your credentials:
 ```env
 OPENAI_API_KEY=your_openai_api_key
 TWILIO_ACCOUNT_SID=your_twilio_account_sid
@@ -51,7 +51,9 @@ TWILIO_AUTH_TOKEN=your_twilio_auth_token
 TWILIO_PHONE_NUMBER=your_twilio_phone_number
 NGROK_URL=your_ngrok_url
 PORT=5050
+GOOGLE_CRED_JSON=path_or_json
 ```
+The application automatically loads variables from `.env` using `python-dotenv`.
 
 ## Usage
 
@@ -80,7 +82,7 @@ curl -X POST "http://localhost:5050/make-call" -H "Content-Type: application/jso
 ├── prompts/            
 │   └── system_prompt.txt # System instructions for AI
 ├── requirements.txt     # Python dependencies
-├── .env                # Environment variables
+├── .env.example        # Sample environment file
 ├── .gitignore          # Git ignore file
 ├── LICENSE             # License file
 └── README.md           # Project documentation
@@ -96,6 +98,7 @@ curl -X POST "http://localhost:5050/make-call" -H "Content-Type: application/jso
 - `TWILIO_PHONE_NUMBER`: Your Twilio phone number
 - `NGROK_URL`: Your ngrok URL
 - `PORT`: Server port (default: 5050)
+- `GOOGLE_CRED_JSON`: Path or JSON with Google credentials
 
 ### System Prompt
 

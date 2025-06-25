@@ -33,6 +33,7 @@ TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 NGROK_URL = os.getenv("NGROK_URL")
 PORT = int(os.getenv("PORT", 5050))
+GOOGLE_CRED_JSON = os.getenv("GOOGLE_CRED_JSON")
 
 SYSTEM_MESSAGE = load_prompt("system_prompt")
 VOICE = "echo"
