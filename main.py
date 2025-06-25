@@ -33,6 +33,9 @@ structlog.configure(
 )
 logger = structlog.get_logger()
 
+# Global variable to track the active call SID
+CURRENT_CALL_ID = None
+
 
 @register_validator("intent_whitelist", data_type="string")
 class IntentWhitelist(Validator):
@@ -199,6 +202,24 @@ async def schedule_meeting(prospect_name: str, time_slot: str, email: str):
     return {"status": "scheduled", "event_id": event.get("id"), "email": email}
 
 
+@app.post("/end-call")
+async def end_call():
+    """Hang up the active call using Twilio's <Hangup> verb."""
+    global CURRENT_CALL_ID
+    if not CURRENT_CALL_ID:
+        return {"error": "No active call"}
+    try:
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        vr = VoiceResponse()
+        vr.hangup()
+        client.calls(CURRENT_CALL_ID).update(twiml=str(vr))
+        logger.info("call.hangup", call_id=CURRENT_CALL_ID)
+        return {"status": "hangup", "call_id": CURRENT_CALL_ID}
+    except Exception as exc:
+        logger.error("hangup.failed", call_id=CURRENT_CALL_ID, error=str(exc))
+        return {"error": "Failed to hang up"}
+
+
 @app.api_route("/outgoing-call", methods=["GET", "POST"])
 async def handle_outgoing_call(request: Request):
     """Handle outgoing call and return TwiML response to connect to Media Stream."""
@@ -236,6 +257,7 @@ async def handle_media_stream(websocket: WebSocket):
         start_ts = None
         transcripts = []
         silence_count = 0
+        derailment_count = 0
 
         async def receive_from_twilio():
             """Receive audio data from Twilio and send it to the OpenAI Realtime API."""
@@ -253,6 +275,8 @@ async def handle_media_stream(websocket: WebSocket):
                         stream_sid = data["start"]["streamSid"]
                         call_id = data["start"].get("callSid")
                         start_ts = datetime.utcnow().isoformat()
+                        global CURRENT_CALL_ID
+                        CURRENT_CALL_ID = call_id
                         logger.info(
                             "stream.started",
                             call_id=call_id,
@@ -293,7 +317,7 @@ async def handle_media_stream(websocket: WebSocket):
 
         async def send_to_twilio():
             """Receive events from the OpenAI Realtime API, send audio back to Twilio."""
-            nonlocal stream_sid, session_id, transcripts, session
+            nonlocal stream_sid, session_id, transcripts, session, derailment_count
             try:
                 async for openai_message in openai_ws:
                     response = json.loads(openai_message)
@@ -342,10 +366,20 @@ async def handle_media_stream(websocket: WebSocket):
                                     call_id=call_id,
                                     content=content,
                                 )
+                                derailment_count += 1
                                 if openai_ws.open:
                                     await openai_ws.send(
                                         json.dumps({"type": "response.cancel"})
                                     )
+                                if derailment_count >= 3:
+                                    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+                                    vr = VoiceResponse()
+                                    vr.hangup()
+                                    client.calls(call_id).update(twiml=str(vr))
+                                    if openai_ws.open:
+                                        await openai_ws.close()
+                                    await websocket.close()
+                                    break
                                 continue
                             intent = None
                             try:
@@ -372,6 +406,16 @@ async def handle_media_stream(websocket: WebSocket):
                                             state=session["state"],
                                             intent=intent,
                                         )
+                                        derailment_count += 1
+                                        if derailment_count >= 3:
+                                            client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+                                            vr = VoiceResponse()
+                                            vr.hangup()
+                                            client.calls(call_id).update(twiml=str(vr))
+                                            if openai_ws.open:
+                                                await openai_ws.close()
+                                            await websocket.close()
+                                            break
                                 elif session["state"] == "awaiting_date":
                                     if intent == "ask_date":
                                         session["state"] = "complete"
@@ -383,6 +427,16 @@ async def handle_media_stream(websocket: WebSocket):
                                             state=session["state"],
                                             intent=intent,
                                         )
+                                        derailment_count += 1
+                                        if derailment_count >= 3:
+                                            client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+                                            vr = VoiceResponse()
+                                            vr.hangup()
+                                            client.calls(call_id).update(twiml=str(vr))
+                                            if openai_ws.open:
+                                                await openai_ws.close()
+                                            await websocket.close()
+                                            break
                     if response["type"] == "input_audio_buffer.speech_started":
                         logger.info("speech.start", call_id=call_id)
 
@@ -401,6 +455,8 @@ async def handle_media_stream(websocket: WebSocket):
             await asyncio.gather(receive_from_twilio(), send_to_twilio())
         finally:
             stop_ts = datetime.utcnow().isoformat()
+            global CURRENT_CALL_ID
+            CURRENT_CALL_ID = None
             logger.info(
                 "call.completed",
                 call_id=call_id,
