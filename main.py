@@ -207,7 +207,10 @@ async def handle_outgoing_call(request: Request):
     response.pause(length=1)
     response.say("Connecting with Compliance Agent")
     connect = Connect()
-    connect.stream(url=f"wss://{request.url.hostname}/media-stream")
+    connect.stream(
+        url=f"wss://{request.url.hostname}/media-stream",
+        media_stream_timeout="5",
+    )
     response.append(connect)
     return HTMLResponse(content=str(response), media_type="application/xml")
 
@@ -232,6 +235,7 @@ async def handle_media_stream(websocket: WebSocket):
         call_id = None
         start_ts = None
         transcripts = []
+        silence_count = 0
 
         async def receive_from_twilio():
             """Receive audio data from Twilio and send it to the OpenAI Realtime API."""
@@ -255,6 +259,21 @@ async def handle_media_stream(websocket: WebSocket):
                             stream_sid=stream_sid,
                             start_time=start_ts,
                         )
+                    elif data["event"] == "media_stream_timeout":
+                        logger.info("silence.detected", call_id=call_id)
+                        silence_count += 1
+                        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+                        if silence_count == 1:
+                            vr = VoiceResponse()
+                            vr.say("I didn't catch that. Are you still there?")
+                            client.calls(call_id).update(twiml=str(vr))
+                        else:
+                            logger.info("silence.hangup", call_id=call_id)
+                            client.calls(call_id).update(status="completed")
+                            if openai_ws.open:
+                                await openai_ws.close()
+                            await websocket.close()
+                            break
             except WebSocketDisconnect:
                 logger.info("client.disconnected", call_id=call_id)
                 if openai_ws.open:
