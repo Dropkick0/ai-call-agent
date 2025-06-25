@@ -22,7 +22,7 @@ A powerful integration that combines OpenAI's Realtime API with Twilio's Voice s
 - Structured JSON responses from GPT-4o using
   `response_format=json` in the WebSocket connection
 - Call summaries persisted to SQLite or Postgres
-- Call transcripts saved to the `transcripts/` directory
+- Call transcripts saved to the `transcripts/` directory, including `call_<id>.txt` plain text logs for QA review
 
 ## Prerequisites
 
