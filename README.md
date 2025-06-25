@@ -22,7 +22,8 @@ A powerful integration that combines OpenAI's Realtime API with Twilio's Voice s
 
 Before you begin, ensure you have:
 
-- Python 3.8 or higher
+- Python 3.11 (recommended)
+- [Poetry](https://python-poetry.org/)
 - An OpenAI API key with Realtime API access
 - A Twilio account with:
   - Account SID
@@ -38,7 +39,11 @@ git clone https://github.com/rehan-dev/ai-call-agent.git
 cd ai-call-agent
 ```
 
-2. Install required dependencies:
+2. Install required dependencies using Poetry:
+```bash
+poetry install
+```
+# or use pip with the provided requirements file
 ```bash
 pip install -r requirements.txt
 ```
@@ -79,6 +84,8 @@ curl -X POST "http://localhost:5050/make-call" -H "Content-Type: application/jso
 ├── main.py              # Main application file
 ├── prompts/            
 │   └── system_prompt.txt # System instructions for AI
+├── pyproject.toml       # Project configuration
+├── poetry.lock          # Locked dependencies
 ├── requirements.txt     # Python dependencies
 ├── .env                # Environment variables
 ├── .gitignore          # Git ignore file
