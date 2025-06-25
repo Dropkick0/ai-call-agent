@@ -4,7 +4,7 @@ import json
 import base64
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import structlog
 import websockets
@@ -14,6 +14,7 @@ from fastapi.websockets import WebSocketDisconnect
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Connect
 from dotenv import load_dotenv
+import gcal
 
 load_dotenv()
 
@@ -47,8 +48,23 @@ TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 NGROK_URL = os.getenv("NGROK_URL")
 PORT = int(os.getenv("PORT", 5050))
 GOOGLE_CRED_JSON = os.getenv("GOOGLE_CRED_JSON")
+CALENDAR_ID = os.getenv("CALENDAR_ID")
 
 SYSTEM_MESSAGE = load_prompt("system_prompt")
+
+
+def get_todays_free_slots():
+    """Return formatted free time slots for today."""
+    if not CALENDAR_ID:
+        raise ValueError("CALENDAR_ID environment variable not set")
+    start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=1)
+    try:
+        slots = gcal.list_free_slots(CALENDAR_ID, start, end)
+    except Exception as exc:
+        logger.error("slots.fetch_failed", error=str(exc))
+        return []
+    return [f"{s[0].strftime('%I:%M %p')} - {s[1].strftime('%I:%M %p')}" for s in slots]
 VOICE = "echo"
 LOG_EVENT_TYPES = [
     "response.content.done",
@@ -97,6 +113,13 @@ async def make_call(to_phone_number: str):
         logger.error("call.initiation_failed", error=str(e))
 
     return {"call_sid": call.sid}
+
+
+@app.post("/offer-time-slots")
+async def offer_time_slots(prospect_name: str):
+    """Return free slots for today."""
+    slots = get_todays_free_slots()
+    return {"prospect_name": prospect_name, "time_slots": slots}
 
 
 @app.api_route("/outgoing-call", methods=["GET", "POST"])
@@ -227,13 +250,18 @@ async def handle_media_stream(websocket: WebSocket):
 
 async def send_session_update(openai_ws):
     """Send session update to OpenAI WebSocket."""
+    slots = get_todays_free_slots()
+    instructions = SYSTEM_MESSAGE
+    if slots:
+        formatted = "\n".join(f"- {s}" for s in slots)
+        instructions += f"\n\nToday's available slots:\n{formatted}"
     session_update = {
         "type": "session.update",
         "session": {
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
-            "instructions": SYSTEM_MESSAGE,
+            "instructions": instructions,
             "modalities": ["text", "audio"],
             "temperature": 0.2,
         },
