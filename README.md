@@ -113,6 +113,11 @@ curl -X POST "http://localhost:5050/make-call" -H "Content-Type: application/jso
 
 The AI's behavior can be customized by modifying the system prompt in `prompts/system_prompt.txt`.
 
+### Agents Manifest
+
+The `openai.yaml` file defines approved function tools for the OpenAI Agents SDK. Only the
+`offer_time_slots`, `schedule_meeting`, and `end_call` actions may be invoked by the model.
+
 ## API Endpoints
 
 - `GET /`: Health check endpoint
