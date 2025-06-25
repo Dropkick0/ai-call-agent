@@ -17,6 +17,7 @@ A powerful integration that combines OpenAI's Realtime API with Twilio's Voice s
 - Support for G711 ULAW audio format
 - Interrupt handling for natural conversation flow
 - Silence detection with auto prompt and hangup
+- Automatic call hangup after the `end_call` tool or three derailments using Twilio's [`<Hangup>` verb](https://www.twilio.com/docs/voice/twiml/hangup)
 - Session management and real-time updates
 - Structured JSON responses from GPT-4o using
   `response_format=json` in the WebSocket connection
@@ -129,6 +130,7 @@ The `openai.yaml` file defines approved function tools for the OpenAI Agents SDK
 - `POST /outgoing-call`: Webhook for Twilio voice calls
 - `WebSocket /media-stream`: WebSocket endpoint for media streaming
 - `POST /offer-time-slots`: Return available slots for today (used by the agent)
+- `POST /end-call`: Hang up the current call (used by the agent)
 
 ## Contributing
 
