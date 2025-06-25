@@ -59,6 +59,7 @@ TWILIO_PHONE_NUMBER=your_twilio_phone_number
 NGROK_URL=your_ngrok_url
 PORT=5050
 GOOGLE_CRED_JSON=path_or_json
+CALENDAR_ID=your_calendar_id
 ```
 The application automatically loads variables from `.env` using `python-dotenv`.
 
@@ -108,6 +109,7 @@ curl -X POST "http://localhost:5050/make-call" -H "Content-Type: application/jso
 - `NGROK_URL`: Your ngrok URL
 - `PORT`: Server port (default: 5050)
 - `GOOGLE_CRED_JSON`: Path or JSON with Google credentials
+- `CALENDAR_ID`: Google Calendar ID used for scheduling
 
 ### System Prompt
 
@@ -124,6 +126,7 @@ The `openai.yaml` file defines approved function tools for the OpenAI Agents SDK
 - `POST /make-call`: Initiate a new call
 - `POST /outgoing-call`: Webhook for Twilio voice calls
 - `WebSocket /media-stream`: WebSocket endpoint for media streaming
+- `POST /offer-time-slots`: Return available slots for today (used by the agent)
 
 ## Contributing
 
