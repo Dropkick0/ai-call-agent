@@ -179,7 +179,8 @@ async def handle_media_stream(websocket: WebSocket):
             "OpenAI-Beta": "realtime=v1",
         },
     ) as openai_ws:
-        await send_session_update(openai_ws)
+        session = {"state": "awaiting_greeting"}
+        await send_session_update(openai_ws, session)
         stream_sid = None
         session_id = None
         call_id = None
@@ -215,7 +216,7 @@ async def handle_media_stream(websocket: WebSocket):
 
         async def send_to_twilio():
             """Receive events from the OpenAI Realtime API, send audio back to Twilio."""
-            nonlocal stream_sid, session_id, transcripts
+            nonlocal stream_sid, session_id, transcripts, session
             try:
                 async for openai_message in openai_ws:
                     response = json.loads(openai_message)
@@ -258,10 +259,12 @@ async def handle_media_stream(websocket: WebSocket):
                         elif "content" in response:
                             content = response.get("content")
                         if content:
+                            intent = None
                             try:
-                                intent_guard.parse(
+                                llm_output = intent_guard.parse(
                                     content if isinstance(content, str) else json.dumps(content)
                                 )
+                                intent = llm_output.intent
                             except Exception as exc:
                                 logger.warning(
                                     "intent.validation_failed",
@@ -269,6 +272,29 @@ async def handle_media_stream(websocket: WebSocket):
                                     error=str(exc),
                                     content=content,
                                 )
+                            if intent:
+                                if session["state"] == "awaiting_greeting":
+                                    if intent == "greeting":
+                                        session["state"] = "awaiting_date"
+                                        await send_session_update(openai_ws, session)
+                                    else:
+                                        logger.warning(
+                                            "state.violation",
+                                            call_id=call_id,
+                                            state=session["state"],
+                                            intent=intent,
+                                        )
+                                elif session["state"] == "awaiting_date":
+                                    if intent == "ask_date":
+                                        session["state"] = "complete"
+                                        await send_session_update(openai_ws, session)
+                                    elif intent != "greeting":
+                                        logger.warning(
+                                            "state.violation",
+                                            call_id=call_id,
+                                            state=session["state"],
+                                            intent=intent,
+                                        )
                     if response["type"] == "input_audio_buffer.speech_started":
                         logger.info("speech.start", call_id=call_id)
 
@@ -296,7 +322,7 @@ async def handle_media_stream(websocket: WebSocket):
             )
 
 
-async def send_session_update(openai_ws):
+async def send_session_update(openai_ws, session):
     """Send session update to OpenAI WebSocket."""
     slots = get_todays_free_slots()
     instructions = SYSTEM_MESSAGE
@@ -312,6 +338,7 @@ async def send_session_update(openai_ws):
             "instructions": instructions,
             "modalities": ["text", "audio"],
             "temperature": 0.2,
+            "state": session.get("state"),
         },
     }
     logger.info("session.update.send", payload=session_update)
