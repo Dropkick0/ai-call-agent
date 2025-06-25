@@ -4,6 +4,7 @@ import json
 import base64
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 from guardrails.validator_base import register_validator, Validator
@@ -59,6 +60,13 @@ class LLMOutput(BaseModel):
 intent_guard = Guard.for_pydantic(LLMOutput)
 
 
+def contains_disallowed_topic(text: str) -> bool:
+    """Return True if text matches the disallowed topics regex."""
+    if DISALLOWED_TOPICS_PATTERN and text:
+        return bool(DISALLOWED_TOPICS_PATTERN.search(text))
+    return False
+
+
 def load_prompt(file_name):
     dir_path = os.path.dirname(os.path.realpath(__file__))
     prompt_path = os.path.join(dir_path, "prompts", f"{file_name}.txt")
@@ -80,6 +88,12 @@ NGROK_URL = os.getenv("NGROK_URL")
 PORT = int(os.getenv("PORT", 5050))
 GOOGLE_CRED_JSON = os.getenv("GOOGLE_CRED_JSON")
 CALENDAR_ID = os.getenv("CALENDAR_ID")
+DISALLOWED_TOPICS_REGEX = os.getenv("DISALLOWED_TOPICS_REGEX")
+
+if DISALLOWED_TOPICS_REGEX:
+    DISALLOWED_TOPICS_PATTERN = re.compile(DISALLOWED_TOPICS_REGEX, re.IGNORECASE)
+else:
+    DISALLOWED_TOPICS_PATTERN = None
 
 SYSTEM_MESSAGE = load_prompt("system_prompt")
 
@@ -259,6 +273,17 @@ async def handle_media_stream(websocket: WebSocket):
                         elif "content" in response:
                             content = response.get("content")
                         if content:
+                            if contains_disallowed_topic(content):
+                                logger.warning(
+                                    "topic.disallowed",
+                                    call_id=call_id,
+                                    content=content,
+                                )
+                                if openai_ws.open:
+                                    await openai_ws.send(
+                                        json.dumps({"type": "response.cancel"})
+                                    )
+                                continue
                             intent = None
                             try:
                                 llm_output = intent_guard.parse(
