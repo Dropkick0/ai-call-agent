@@ -259,6 +259,18 @@ async def handle_media_stream(websocket: WebSocket):
                             stream_sid=stream_sid,
                             start_time=start_ts,
                         )
+                    elif data["event"] == "dtmf":
+                        digits = (
+                            data.get("dtmf", {}).get("digits")
+                            or data.get("digits")
+                            or data.get("dtmf")
+                        )
+                        if digits:
+                            session.setdefault("digits", "")
+                            session["digits"] += digits
+                            logger.info(
+                                "digits.received", call_id=call_id, digits=digits
+                            )
                     elif data["event"] == "media_stream_timeout":
                         logger.info("silence.detected", call_id=call_id)
                         silence_count += 1
