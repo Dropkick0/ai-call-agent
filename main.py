@@ -480,6 +480,25 @@ async def handle_media_stream(websocket: WebSocket):
                 logger.error("transcript.save_failed", call_id=call_id, error=str(exc))
                 transcript_file = None
 
+            # Append plain text transcript for QA review
+            qa_file = os.path.join(transcript_dir, f"call_{call_id}.txt")
+            try:
+                with open(qa_file, "a", encoding="utf-8") as f:
+                    for item in transcripts:
+                        role = None
+                        content = None
+                        if isinstance(item.get("message"), dict):
+                            role = item["message"].get("role")
+                            content = item["message"].get("content")
+                        else:
+                            role = item.get("role") or item.get("speaker")
+                            content = item.get("content")
+                        if content:
+                            prefix = "GPT-4o" if role == "assistant" else "ASR"
+                            f.write(f"{prefix}: {content}\n")
+            except Exception as exc:
+                logger.error("qa_transcript.save_failed", call_id=call_id, error=str(exc))
+
             try:
                 duration = (
                     datetime.fromisoformat(stop_ts)
