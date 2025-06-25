@@ -3,6 +3,10 @@ import os
 import json
 import base64
 import asyncio
+import logging
+from datetime import datetime
+
+import structlog
 import websockets
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import HTMLResponse
@@ -13,6 +17,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+logging.basicConfig(format="%(message)s", level=logging.INFO)
+structlog.configure(
+    processors=[
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer(),
+    ]
+)
+logger = structlog.get_logger()
+
 
 def load_prompt(file_name):
     dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -22,7 +35,7 @@ def load_prompt(file_name):
         with open(prompt_path, "r", encoding="utf-8") as file:
             return file.read().strip()
     except FileNotFoundError:
-        print(f"Could not find file: {prompt_path}")
+        logger.error("prompt.load_failed", path=prompt_path)
         raise
 
 
@@ -73,9 +86,15 @@ async def make_call(to_phone_number: str):
             to=to_phone_number,
             from_=TWILIO_PHONE_NUMBER,
         )
-        print(f"Call initiated with SID: {call.sid}")
+        start_ts = datetime.utcnow().isoformat()
+        logger.info(
+            "call.initiated",
+            call_id=call.sid,
+            start_time=start_ts,
+            to=to_phone_number,
+        )
     except Exception as e:
-        print(f"Error initiating call: {e}")
+        logger.error("call.initiation_failed", error=str(e))
 
     return {"call_sid": call.sid}
 
@@ -96,7 +115,7 @@ async def handle_outgoing_call(request: Request):
 @app.websocket("/media-stream")
 async def handle_media_stream(websocket: WebSocket):
     """Handle WebSocket connections between Twilio and OpenAI."""
-    print("Client connected")
+    logger.info("client.connected")
     await websocket.accept()
 
     async with websockets.connect(
@@ -109,10 +128,13 @@ async def handle_media_stream(websocket: WebSocket):
         await send_session_update(openai_ws)
         stream_sid = None
         session_id = None
+        call_id = None
+        start_ts = None
+        transcripts = []
 
         async def receive_from_twilio():
             """Receive audio data from Twilio and send it to the OpenAI Realtime API."""
-            nonlocal stream_sid
+            nonlocal stream_sid, call_id, start_ts
             try:
                 async for message in websocket.iter_text():
                     data = json.loads(message)
@@ -124,24 +146,36 @@ async def handle_media_stream(websocket: WebSocket):
                         await openai_ws.send(json.dumps(audio_append))
                     elif data["event"] == "start":
                         stream_sid = data["start"]["streamSid"]
-                        print(f"Incoming stream has started {stream_sid}")
+                        call_id = data["start"].get("callSid")
+                        start_ts = datetime.utcnow().isoformat()
+                        logger.info(
+                            "stream.started",
+                            call_id=call_id,
+                            stream_sid=stream_sid,
+                            start_time=start_ts,
+                        )
             except WebSocketDisconnect:
-                print("Client disconnected.")
+                logger.info("client.disconnected", call_id=call_id)
                 if openai_ws.open:
                     await openai_ws.close()
 
         async def send_to_twilio():
             """Receive events from the OpenAI Realtime API, send audio back to Twilio."""
-            nonlocal stream_sid, session_id
+            nonlocal stream_sid, session_id, transcripts
             try:
                 async for openai_message in openai_ws:
                     response = json.loads(openai_message)
                     if response["type"] in LOG_EVENT_TYPES:
-                        print(f"Received event: {response['type']}", response)
+                        logger.info(
+                            "openai.event",
+                            call_id=call_id,
+                            event=response["type"],
+                            payload=response,
+                        )
                     if response["type"] == "session.created":
                         session_id = response["session"]["id"]
                     if response["type"] == "session.updated":
-                        print("Session updated successfully:", response)
+                        logger.info("session.updated", call_id=call_id)
                     if response["type"] == "response.audio.delta" and response.get(
                         "delta"
                     ):
@@ -156,26 +190,39 @@ async def handle_media_stream(websocket: WebSocket):
                             }
                             await websocket.send_json(audio_delta)
                         except Exception as e:
-                            print(f"Error processing audio data: {e}")
+                            logger.error(
+                                "audio.process_error", call_id=call_id, error=str(e)
+                            )
                     if response["type"] == "conversation.item.created":
-                        print(f"conversation.item.created event: {response}")
+                        transcripts.append(response)
+                        logger.info(
+                            "conversation.item", call_id=call_id, item=response
+                        )
                     if response["type"] == "input_audio_buffer.speech_started":
-                        print("Speech Start:", response["type"])
+                        logger.info("speech.start", call_id=call_id)
 
                         # Send clear event to Twilio
-                        await websocket.send_json(
-                            {"streamSid": stream_sid, "event": "clear"}
-                        )
+                        await websocket.send_json({"streamSid": stream_sid, "event": "clear"})
 
-                        print("Cancelling AI speech from the server")
+                        logger.info("speech.cancel", call_id=call_id)
 
                         # Send cancel message to OpenAI
                         interrupt_message = {"type": "response.cancel"}
                         await openai_ws.send(json.dumps(interrupt_message))
             except Exception as e:
-                print(f"Error in send_to_twilio: {e}")
+                logger.error("send_to_twilio.error", call_id=call_id, error=str(e))
 
-        await asyncio.gather(receive_from_twilio(), send_to_twilio())
+        try:
+            await asyncio.gather(receive_from_twilio(), send_to_twilio())
+        finally:
+            stop_ts = datetime.utcnow().isoformat()
+            logger.info(
+                "call.completed",
+                call_id=call_id,
+                start_time=start_ts,
+                stop_time=stop_ts,
+                outcome=transcripts,
+            )
 
 
 async def send_session_update(openai_ws):
@@ -191,5 +238,5 @@ async def send_session_update(openai_ws):
             "temperature": 0.2,
         },
     }
-    print("Sending session update:", json.dumps(session_update))
+    logger.info("session.update.send", payload=session_update)
     await openai_ws.send(json.dumps(session_update))
