@@ -21,6 +21,8 @@ A powerful integration that combines OpenAI's Realtime API with Twilio's Voice s
 - Session management and real-time updates
 - Structured JSON responses from GPT-4o using
   `response_format=json` in the WebSocket connection
+- Call summaries persisted to SQLite or Postgres
+- Call transcripts saved to the `transcripts/` directory
 
 ## Prerequisites
 
@@ -113,6 +115,7 @@ curl -X POST "http://localhost:5050/make-call" -H "Content-Type: application/jso
 - `GOOGLE_CRED_JSON`: Path or JSON with Google credentials
 - `CALENDAR_ID`: Google Calendar ID used for scheduling
 - `DISALLOWED_TOPICS_REGEX`: Regex pattern for topics the agent should avoid
+- `DATABASE_URL`: SQLAlchemy database URL (e.g. `sqlite:///./calls.db` or `postgresql://user:pass@host/db`)
 
 ### System Prompt
 
