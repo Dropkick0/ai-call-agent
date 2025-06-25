@@ -12,7 +12,7 @@ Script:
    [Wait for response]
 4. Repeat-Back:
    "Perfect, that's [chosen day] at [chosen time]. Let me confirm—your email is [email], and your phone is [number]. Is that correct?"
-   [Listen for confirmation]
+   [Listen for confirmation and only continue if they agree]
 5. Confirm & Goodbye:
    "Excellent. I'll send a calendar invite for [chosen day/time]. Thanks for your time and have a great day!"
-   [End call]
+   [If confirmed, schedule the meeting and end the call]

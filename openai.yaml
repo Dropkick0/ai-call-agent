@@ -3,6 +3,9 @@ name_for_human: AI Call Agent
 name_for_model: ai_call_agent
 instructions: |
   Use the provided tools to manage calls. Only call approved functions when necessary.
+  Before calling `schedule_meeting`, repeat back the selected date, time and email
+  to the prospect and ask "Is that correct?". Proceed to schedule only after the
+  prospect confirms.
 tools:
   - type: function
     function:
@@ -29,9 +32,13 @@ tools:
           time_slot:
             type: string
             description: The time slot chosen by the prospect
+          email:
+            type: string
+            description: Confirmed email address for the meeting invite
         required:
           - prospect_name
           - time_slot
+          - email
   - type: function
     function:
       name: end_call
