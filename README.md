@@ -135,6 +135,19 @@ The `openai.yaml` file defines approved function tools for the OpenAI Agents SDK
 - `POST /offer-time-slots`: Return available slots for today (used by the agent)
 - `POST /end-call`: Hang up the current call (used by the agent)
 
+## Demo Mode (No Twilio or Calendar)
+
+You can test the voice experience locally without any phone or calendar setup:
+
+```bash
+pip install -r requirements.txt
+python demo_mode.py
+```
+
+Talk into your microphone and the agent will reply using the OpenAI Realtime API.
+Available meeting slots are defined inside `demo_mode.py` and do not require
+Google Calendar.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
